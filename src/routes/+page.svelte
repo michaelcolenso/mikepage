@@ -10,6 +10,7 @@
 	import { LineMaterial } from 'three/examples/jsm/lines/LineMaterial';
 	import { LineGeometry } from 'three/examples/jsm/lines/LineGeometry';
 	import { Line2 } from 'three/examples/jsm/lines/Line2';
+	import { MeshSurfaceSampler } from 'three/examples/jsm/math/MeshSurfaceSampler.js'; // Add this line
 
 	let container;
 	let renderer;
@@ -74,10 +75,10 @@
 		container.addEventListener('click', onMouseClick);
 
 		scene = new THREE.Scene();
-		scene.background = new THREE.Color(0x000000);
+		scene.background = new THREE.Color(0x111333);
 
 		camera = new THREE.PerspectiveCamera(
-			75, // Increased FOV
+			100, // Increased FOV
 			container.clientWidth / container.clientHeight,
 			0.1,
 			1000
@@ -93,7 +94,7 @@
 
 		// Enable Tone Mapping and adjust exposure
 		renderer.toneMapping = THREE.ACESFilmicToneMapping;
-		renderer.toneMappingExposure = 1.5; // Increased exposure for brighter scene
+		renderer.toneMappingExposure = 1.0; // Increased exposure for brighter scene
 
 		// Disable shadows if they are making the scene too dark
 		renderer.shadowMap.enabled = false;
@@ -213,7 +214,7 @@
 				dashed: false,
 				alphaToCoverage: true,
 				transparent: true,
-				opacity: 0.5 + relationStrength * 0.4, // Increased base opacity
+				opacity: 0.1 + relationStrength * 0.4, // Increased base opacity
 				blending: THREE.AdditiveBlending, // Add additive blending for a glowing effect
 				depthTest: true,
 				depthWrite: false // Prevent lines from being obscured by other objects
@@ -258,16 +259,16 @@
 		// Generate color mapping for tags
 		tagColorMap = generateTagColorMap(uniqueTags);
 
-		// Shared geometry and material
+		// Shared geometry and material for the instances (spheres)
 		const geometry = new THREE.SphereGeometry(sphereBaseSize, 8, 8);
 
 		// Use MeshStandardMaterial for better lighting and realism
 		const material = new THREE.MeshStandardMaterial({
 			vertexColors: true, // Important for per-instance colors
 			roughness: 0.01, // Reduced roughness for shinier surfaces
-			metalness: 0.2,
+			metalness: 1,
 			emissive: new THREE.Color(0xf542b3), // Emissive color set to white
-			emissiveIntensity: 0.4 // Moderate emissive intensity
+			emissiveIntensity: 0.3 // Moderate emissive intensity
 		});
 
 		// Create InstancedMesh
@@ -277,24 +278,38 @@
 		const colors = [];
 		const dummy = new THREE.Object3D();
 
-		// Calculate positions
-		const positions = calculatePositions(bookmarks.length, 'surface'); // Use 'surface' or 'volume'
+		// Create new geometry for sampling positions
+		const surfaceGeometry = new THREE.TorusKnotGeometry(50, 10, 100, 16).toNonIndexed();
+		const surfaceMaterial = new THREE.MeshStandardMaterial({ color: 0x555555, wireframe: true });
+		const surface = new THREE.Mesh(surfaceGeometry, surfaceMaterial);
+		scene.add(surface); // Optionally, add the surface to the scene to visualize it
+
+		// Initialize the MeshSurfaceSampler
+		const sampler = new MeshSurfaceSampler(surface).build();
+
+		const position = new THREE.Vector3();
+		const normal = new THREE.Vector3();
 
 		bookmarks.forEach((bookmark, index) => {
 			const tags = bookmark.tags.split(' ');
 
-			// Determine primary tag (you can define your own logic for primary tag)
-			const primaryTag = tags[0]; // For simplicity, using the first tag as primary
+			// Determine primary tag
+			const primaryTag = tags[0];
 
 			// Get color for primary tag
 			const tagColor = new THREE.Color(tagColorMap.get(primaryTag));
 
-			// Set position and scale using dummy Object3D
-			dummy.position.copy(positions[index]);
+			// Sample a position on the surface
+			sampler.sample(position, normal);
 
-			// Optionally scale based on number of tags or other properties
+			// Set position and orientation
+			dummy.position.copy(position);
+			dummy.lookAt(normal.add(position));
+
+			// Scale based on number of tags
 			const size = sphereBaseSize + (tags.length / 10) * (sphereMaxSize - sphereBaseSize);
 			dummy.scale.set(size, size, size);
+
 			dummy.updateMatrix();
 			instancedMesh.setMatrixAt(index, dummy.matrix);
 
