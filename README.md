@@ -1,9 +1,9 @@
+![screenshot of the bookmark viz project](bookmark-sphere.png)
 
 # Bookmark Visualization Project
 
 This project is an interactive 3D visualization of bookmarks using Three.js, Svelte, and various Three.js extensions. The visualization creates a network of bookmarks, each represented as a node, and categorizes them based on tags. Users can explore related bookmarks, visualize connections, and discover interesting content clusters.
 
-![screenshot of the bookmark viz project](bookmark-sphere.png)
 
 ## Features
 
