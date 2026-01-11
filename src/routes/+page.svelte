@@ -10,6 +10,7 @@
 	import { LineMaterial } from 'three/examples/jsm/lines/LineMaterial';
 	import { LineGeometry } from 'three/examples/jsm/lines/LineGeometry';
 	import { Line2 } from 'three/examples/jsm/lines/Line2';
+	import { throttle } from 'lodash';
 
 	let container;
 	let renderer;
@@ -26,6 +27,9 @@
 	let tooltipY = 0;
 	let lineGroup; // To hold all connection lines
 	let lines = []; // To track active lines for cleanup
+	let isLoading = false; // Loading state for bookmark fetch
+	let throttledMouseMove; // Store throttled function for cleanup
+	let handleKeyDown; // Store keyboard handler for cleanup
 
 	// Configuration
 	const sphereBaseSize = 1.0;
@@ -66,12 +70,44 @@
 		return tagColorMap;
 	};
 
+	// Helper function to clear selection
+	const clearSelection = () => {
+		selectedBookmarks = [];
+		// Reset all colors
+		bookmarksData.forEach((bookmark, index) => {
+			const primaryTag = bookmark.tags.split(' ')[0];
+			const tagColor = new THREE.Color(tagColorMap.get(primaryTag));
+			instancedMesh.setColorAt(index, tagColor);
+		});
+		instancedMesh.instanceColor.needsUpdate = true;
+
+		// Remove connection lines
+		if (lineGroup) {
+			scene.remove(lineGroup);
+			lines.forEach((line) => {
+				line.geometry.dispose();
+				line.material.dispose();
+			});
+			lines = [];
+		}
+	};
+
 	const init = () => {
 		raycaster = new THREE.Raycaster();
 		mouse = new THREE.Vector2();
 
-		container.addEventListener('mousemove', onMouseMove);
+		// Throttle mousemove for better performance
+		throttledMouseMove = throttle(onMouseMove, 50);
+		container.addEventListener('mousemove', throttledMouseMove);
 		container.addEventListener('click', onMouseClick);
+
+		// Add keyboard listener for Escape key
+		handleKeyDown = (event) => {
+			if (event.key === 'Escape' && selectedBookmarks.length > 0) {
+				clearSelection();
+			}
+		};
+		window.addEventListener('keydown', handleKeyDown);
 
 		scene = new THREE.Scene();
 		scene.background = new THREE.Color(0x000000);
@@ -149,6 +185,7 @@
 	};
 
 	const loadBookmarks = async () => {
+		isLoading = true;
 		try {
 			const response = await fetch('/api/bookmarks?chunk=0&size=2000');
 			const data = await response.json();
@@ -159,6 +196,8 @@
 			}
 		} catch (error) {
 			console.error('Failed to load bookmarks:', error);
+		} finally {
+			isLoading = false;
 		}
 	};
 
@@ -397,24 +436,7 @@
 				createConnectionLines(clickedBookmark, selectedBookmarks);
 			}
 		} else {
-			selectedBookmarks = [];
-			// Reset colors
-			bookmarksData.forEach((bookmark, index) => {
-				const primaryTag = bookmark.tags.split(' ')[0];
-				const tagColor = new THREE.Color(tagColorMap.get(primaryTag));
-				instancedMesh.setColorAt(index, tagColor);
-			});
-			instancedMesh.instanceColor.needsUpdate = true;
-
-			// Remove lines
-			if (lineGroup) {
-				scene.remove(lineGroup);
-				lines.forEach((line) => {
-					line.geometry.dispose();
-					line.material.dispose();
-				});
-				lines = [];
-			}
+			clearSelection();
 		}
 	};
 
@@ -447,8 +469,13 @@
 
 		return () => {
 			window.removeEventListener('resize', onWindowResize);
-			container.removeEventListener('mousemove', onMouseMove);
+			if (throttledMouseMove) {
+				container.removeEventListener('mousemove', throttledMouseMove);
+			}
 			container.removeEventListener('click', onMouseClick);
+			if (handleKeyDown) {
+				window.removeEventListener('keydown', handleKeyDown);
+			}
 
 			if (controls) {
 				controls.dispose();
@@ -488,6 +515,18 @@
 		style="touch-action: none;"
 	/>
 
+	<!-- Loading spinner -->
+	{#if isLoading}
+		<div class="absolute inset-0 flex items-center justify-center bg-black/50 backdrop-blur-sm">
+			<div class="text-center">
+				<div
+					class="w-16 h-16 border-4 border-blue-500 border-t-transparent rounded-full animate-spin mx-auto"
+				></div>
+				<p class="text-white mt-4 text-lg">Loading bookmarks...</p>
+			</div>
+		</div>
+	{/if}
+
 	{#if selectedBookmarks.length > 0}
 		<div
 			class="absolute top-4 right-4 p-4 bg-white/90 backdrop-blur-sm rounded-lg shadow-lg max-w-md max-h-[80vh] overflow-y-auto"
@@ -496,19 +535,7 @@
 				<h2 class="text-lg font-bold text-gray-900">
 					Related Bookmarks ({selectedBookmarks.length})
 				</h2>
-				<button
-					class="text-gray-500 hover:text-gray-700"
-					on:click={() => {
-						selectedBookmarks = [];
-						// Reset all colors
-						bookmarksData.forEach((bookmark, index) => {
-							const primaryTag = bookmark.tags.split(' ')[0];
-							const tagColor = new THREE.Color(tagColorMap.get(primaryTag));
-							instancedMesh.setColorAt(index, tagColor);
-						});
-						instancedMesh.instanceColor.needsUpdate = true;
-					}}
-				>
+				<button class="text-gray-500 hover:text-gray-700" on:click={clearSelection}>
 					×
 				</button>
 			</div>
