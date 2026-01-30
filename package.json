@@ -33,6 +33,7 @@
 	},
 	"type": "module",
 	"dependencies": {
+		"@sveltejs/adapter-static": "^3.0.10",
 		"lodash": "^4.17.21",
 		"lucide-svelte": "^0.454.0",
 		"three": "^0.170.0"
