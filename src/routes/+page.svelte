@@ -1,6 +1,7 @@
 <!-- src/routes/+page.svelte -->
 <script>
 	import { onMount } from 'svelte';
+	import { base } from '$app/paths';
 	import * as THREE from 'three';
 	import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls';
 	import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer';
@@ -187,12 +188,13 @@
 	const loadBookmarks = async () => {
 		isLoading = true;
 		try {
-			const response = await fetch('/api/bookmarks?chunk=0&size=2000');
-			const data = await response.json();
+			const response = await fetch(`${base}/data/filtered_bookmarks.json`);
+			const allBookmarks = await response.json();
 
-			if (data.bookmarks) {
-				bookmarksData = data.bookmarks;
-				createBookmarkMeshes(data.bookmarks);
+			const bookmarks = allBookmarks.slice(0, 2000);
+			if (bookmarks.length > 0) {
+				bookmarksData = bookmarks;
+				createBookmarkMeshes(bookmarks);
 			}
 		} catch (error) {
 			console.error('Failed to load bookmarks:', error);
