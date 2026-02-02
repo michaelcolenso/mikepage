@@ -7,74 +7,121 @@
 	import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer';
 	import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass';
 	import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass';
-	// Add this after your existing imports
 	import { LineMaterial } from 'three/examples/jsm/lines/LineMaterial';
 	import { LineGeometry } from 'three/examples/jsm/lines/LineGeometry';
 	import { Line2 } from 'three/examples/jsm/lines/Line2';
 	import { throttle } from 'lodash';
+	import {
+		forceSimulation,
+		forceLink,
+		forceManyBody,
+		forceCenter,
+		forceCollide
+	} from 'd3-force-3d';
 
 	let container;
 	let renderer;
 	let scene;
 	let camera;
 	let controls;
-	let composer; // For post-processing
-	let instancedMesh; // Single InstancedMesh
+	let composer;
+	let instancedMesh;
 	let raycaster;
 	let mouse;
 	let selectedBookmarks = [];
 	let hoveredBookmark = null;
 	let tooltipX = 0;
 	let tooltipY = 0;
-	let lineGroup; // To hold all connection lines
-	let lines = []; // To track active lines for cleanup
-	let isLoading = false; // Loading state for bookmark fetch
-	let throttledMouseMove; // Store throttled function for cleanup
-	let handleKeyDown; // Store keyboard handler for cleanup
+	let lineGroup;
+	let lines = [];
+	let isLoading = false;
+	let throttledMouseMove;
+	let handleKeyDown;
+	let simulation;
+	let simulationRunning = false;
 
 	// Configuration
 	const sphereBaseSize = 1.0;
 	const sphereMaxSize = 1.9;
-	const clusterRadius = 40;
-	const clusterLevels = 3;
-	const maxInstancesPerMesh = 2000; // Define based on performance testing
+	const maxBookmarks = 2000;
 
-	// Store bookmarks data
+	// Data
 	let bookmarksData = [];
-
-	// Map to link instance IDs to bookmark data
+	let graphNodes = [];
 	const instanceIdToBookmark = new Map();
-
-	// Global tag color map
+	const nodeScales = [];
 	let tagColorMap = new Map();
+	const dummy = new THREE.Object3D();
 
-	// Function to extract unique tags
 	const getUniqueTags = (bookmarks) => {
 		const tagSet = new Set();
 		bookmarks.forEach((bookmark) => {
-			const tags = bookmark.tags.split(' ');
-			tags.forEach((tag) => tagSet.add(tag));
+			bookmark.tags.split(' ').forEach((tag) => tagSet.add(tag));
 		});
 		return Array.from(tagSet);
 	};
 
-	// Function to generate tag color map using HSL
 	const generateTagColorMap = (tags) => {
-		const tagColorMap = new Map();
+		const map = new Map();
 		const totalTags = tags.length;
 		tags.forEach((tag, index) => {
-			const hue = (index / totalTags) * 360; // Evenly distribute hues
-			const saturation = 70; // Percentage
-			const lightness = 50; // Percentage
-			tagColorMap.set(tag, `hsl(${hue}, ${saturation}%, ${lightness}%)`);
+			const hue = (index / totalTags) * 360;
+			map.set(tag, `hsl(${hue}, 70%, 50%)`);
 		});
-		return tagColorMap;
+		return map;
 	};
 
-	// Helper function to clear selection
+	// Build links between bookmarks that share 2+ tags
+	const buildGraphLinks = (bookmarks) => {
+		// Inverted index: tag -> bookmark indices
+		const tagToIndices = new Map();
+		bookmarks.forEach((b, i) => {
+			b.tags.split(' ').forEach((tag) => {
+				if (!tagToIndices.has(tag)) tagToIndices.set(tag, []);
+				tagToIndices.get(tag).push(i);
+			});
+		});
+
+		// For each bookmark, count shared tags with other bookmarks
+		const pairCounts = new Map();
+		bookmarks.forEach((b, i) => {
+			const relatedCounts = new Map();
+			b.tags.split(' ').forEach((tag) => {
+				const indices = tagToIndices.get(tag);
+				// Skip very popular tags to avoid combinatorial explosion
+				if (indices.length > 150) return;
+				indices.forEach((j) => {
+					if (j !== i) {
+						relatedCounts.set(j, (relatedCounts.get(j) || 0) + 1);
+					}
+				});
+			});
+
+			relatedCounts.forEach((count, j) => {
+				if (count >= 2) {
+					const key = Math.min(i, j) + '|' + Math.max(i, j);
+					if (!pairCounts.has(key)) {
+						pairCounts.set(key, { source: i, target: j, value: count });
+					}
+				}
+			});
+		});
+
+		let links = Array.from(pairCounts.values());
+
+		// Cap links for performance (keep strongest connections)
+		if (links.length > 8000) {
+			links.sort((a, b) => b.value - a.value);
+			links.length = 8000;
+		}
+
+		return links;
+	};
+
 	const clearSelection = () => {
+		if (!instancedMesh) return;
 		selectedBookmarks = [];
-		// Reset all colors
+
 		bookmarksData.forEach((bookmark, index) => {
 			const primaryTag = bookmark.tags.split(' ')[0];
 			const tagColor = new THREE.Color(tagColorMap.get(primaryTag));
@@ -82,7 +129,6 @@
 		});
 		instancedMesh.instanceColor.needsUpdate = true;
 
-		// Remove connection lines
 		if (lineGroup) {
 			scene.remove(lineGroup);
 			lines.forEach((line) => {
@@ -97,12 +143,10 @@
 		raycaster = new THREE.Raycaster();
 		mouse = new THREE.Vector2();
 
-		// Throttle mousemove for better performance
 		throttledMouseMove = throttle(onMouseMove, 50);
 		container.addEventListener('mousemove', throttledMouseMove);
 		container.addEventListener('click', onMouseClick);
 
-		// Add keyboard listener for Escape key
 		handleKeyDown = (event) => {
 			if (event.key === 'Escape' && selectedBookmarks.length > 0) {
 				clearSelection();
@@ -114,12 +158,12 @@
 		scene.background = new THREE.Color(0x000000);
 
 		camera = new THREE.PerspectiveCamera(
-			75, // Increased FOV
+			75,
 			container.clientWidth / container.clientHeight,
 			0.1,
-			1000
+			2000
 		);
-		camera.position.set(0, 0, 150); // Moved camera further back
+		camera.position.set(0, 0, 350);
 
 		renderer = new THREE.WebGLRenderer({
 			antialias: true,
@@ -127,56 +171,35 @@
 		});
 		renderer.setSize(container.clientWidth, container.clientHeight);
 		renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-
-		// Enable Tone Mapping and adjust exposure
 		renderer.toneMapping = THREE.ACESFilmicToneMapping;
-		renderer.toneMappingExposure = 1.5; // Increased exposure for brighter scene
-
-		// Disable shadows if they are making the scene too dark
+		renderer.toneMappingExposure = 1.5;
 		renderer.shadowMap.enabled = false;
-
 		container.appendChild(renderer.domElement);
 
-		// Post-processing setup
 		composer = new EffectComposer(renderer);
-		const renderPass = new RenderPass(scene, camera);
-		composer.addPass(renderPass);
-
-		const bloomPass = new UnrealBloomPass(
-			new THREE.Vector2(container.clientWidth, container.clientHeight),
-			1.5, // strength
-			0.4, // radius
-			0.85 // threshold
+		composer.addPass(new RenderPass(scene, camera));
+		composer.addPass(
+			new UnrealBloomPass(
+				new THREE.Vector2(container.clientWidth, container.clientHeight),
+				1.5,
+				0.4,
+				0.85
+			)
 		);
-		composer.addPass(bloomPass);
 
 		controls = new OrbitControls(camera, renderer.domElement);
 		controls.enableDamping = true;
 		controls.dampingFactor = 0.07;
 		controls.screenSpacePanning = false;
-		controls.minDistance = 50;
-		controls.maxDistance = 200;
-		controls.maxPolarAngle = Math.PI / 1.5;
+		controls.minDistance = 100;
+		controls.maxDistance = 600;
+		controls.maxPolarAngle = Math.PI; // Allow full rotation for 3D graph
 
-		// Ambient Light
-		const ambientLight = new THREE.AmbientLight(0xffffff, 1.0); // Increased intensity
+		const ambientLight = new THREE.AmbientLight(0xffffff, 1.0);
 		scene.add(ambientLight);
 
-		// Directional Light
-		// const directionalLight = new THREE.DirectionalLight(0xffffff, 1.5); // Increased intensity
-		// directionalLight.position.set(1, 1, 1);
-		// scene.add(directionalLight);
-
-		// Optional: Add HemisphereLight for more natural lighting
-
-		// const hemisphereLight = new THREE.HemisphereLight(0xffffff, 0x444444, 0.6);
-		// hemisphereLight.position.set(0, 200, 0);
-		// scene.add(hemisphereLight);
-
-		// Optional: Add PointLight or SpotLight
-
-		const pointLight = new THREE.PointLight(0xffffff, 1, 100);
-		pointLight.position.set(50, 50, 50);
+		const pointLight = new THREE.PointLight(0xffffff, 1, 500);
+		pointLight.position.set(100, 100, 100);
 		scene.add(pointLight);
 
 		loadBookmarks();
@@ -190,11 +213,44 @@
 		try {
 			const response = await fetch(`${base}/data/filtered_bookmarks.json`);
 			const allBookmarks = await response.json();
+			const bookmarks = allBookmarks.slice(0, maxBookmarks);
 
-			const bookmarks = allBookmarks.slice(0, 2000);
 			if (bookmarks.length > 0) {
 				bookmarksData = bookmarks;
+
+				// Build graph nodes
+				graphNodes = bookmarks.map((b, i) => ({ index: i }));
+
+				// Generate links from shared tags
+				const links = buildGraphLinks(bookmarks);
+				console.log(`Force graph: ${graphNodes.length} nodes, ${links.length} links`);
+
+				// Create force simulation in 3D
+				simulation = forceSimulation(graphNodes, 3)
+					.force(
+						'link',
+						forceLink(links)
+							.id((d) => d.index)
+							.distance((link) => 40 / Math.sqrt(link.value))
+							.strength((link) => Math.min(0.7, link.value * 0.15))
+					)
+					.force('charge', forceManyBody().strength(-40))
+					.force('center', forceCenter())
+					.force('collide', forceCollide(3));
+
+				// Warmup: run 100 ticks before first render so layout has initial structure
+				simulation.stop();
+				simulation.tick(100);
+
+				// Create meshes at warmup positions
 				createBookmarkMeshes(bookmarks);
+
+				// Restart simulation for animated settling
+				simulationRunning = true;
+				simulation.on('end', () => {
+					simulationRunning = false;
+				});
+				simulation.restart();
 			}
 		} catch (error) {
 			console.error('Failed to load bookmarks:', error);
@@ -203,8 +259,66 @@
 		}
 	};
 
+	const createBookmarkMeshes = (bookmarks) => {
+		const uniqueTags = getUniqueTags(bookmarks);
+		tagColorMap = generateTagColorMap(uniqueTags);
+
+		const geometry = new THREE.SphereGeometry(sphereBaseSize, 8, 8);
+		const material = new THREE.MeshStandardMaterial({
+			vertexColors: true,
+			roughness: 0.01,
+			metalness: 0.2,
+			emissive: new THREE.Color(0xf542b3),
+			emissiveIntensity: 0.4
+		});
+
+		instancedMesh = new THREE.InstancedMesh(geometry, material, bookmarks.length);
+
+		const colors = [];
+		bookmarks.forEach((bookmark, index) => {
+			const tags = bookmark.tags.split(' ');
+			const primaryTag = tags[0];
+			const tagColor = new THREE.Color(tagColorMap.get(primaryTag));
+
+			// Position from force simulation
+			const node = graphNodes[index];
+			dummy.position.set(node.x || 0, node.y || 0, node.z || 0);
+
+			// Scale based on tag count
+			const size = sphereBaseSize + (tags.length / 10) * (sphereMaxSize - sphereBaseSize);
+			nodeScales[index] = size;
+			dummy.scale.set(size, size, size);
+			dummy.updateMatrix();
+			instancedMesh.setMatrixAt(index, dummy.matrix);
+
+			colors.push(tagColor.r, tagColor.g, tagColor.b);
+			instanceIdToBookmark.set(index, bookmark);
+		});
+
+		instancedMesh.instanceColor = new THREE.InstancedBufferAttribute(
+			new Float32Array(colors),
+			3
+		);
+		instancedMesh.instanceColor.needsUpdate = true;
+		scene.add(instancedMesh);
+	};
+
+	// Update InstancedMesh positions from simulation node coordinates
+	const updateNodePositions = () => {
+		if (!instancedMesh || !graphNodes.length) return;
+
+		graphNodes.forEach((node, i) => {
+			dummy.position.set(node.x || 0, node.y || 0, node.z || 0);
+			const s = nodeScales[i] || 1;
+			dummy.scale.set(s, s, s);
+			dummy.updateMatrix();
+			instancedMesh.setMatrixAt(i, dummy.matrix);
+		});
+
+		instancedMesh.instanceMatrix.needsUpdate = true;
+	};
+
 	const createConnectionLines = (selectedBookmark, relatedBookmarks) => {
-		// Remove existing lines
 		if (lineGroup) {
 			scene.remove(lineGroup);
 			lines.forEach((line) => {
@@ -216,26 +330,35 @@
 
 		lineGroup = new THREE.Group();
 
-		// Get position of selected bookmark
-		const selectedMatrix = new THREE.Matrix4();
-		instancedMesh.getMatrixAt(bookmarksData.indexOf(selectedBookmark), selectedMatrix);
-		const selectedPosition = new THREE.Vector3();
-		selectedPosition.setFromMatrixPosition(selectedMatrix);
+		// Get position from simulation node
+		const selectedIndex = bookmarksData.indexOf(selectedBookmark);
+		const selectedNode = graphNodes[selectedIndex];
+		const selectedPosition = new THREE.Vector3(
+			selectedNode.x || 0,
+			selectedNode.y || 0,
+			selectedNode.z || 0
+		);
 
-		// Create lines to related bookmarks
+		// Use selected node's tag color for connection lines
+		const selectedColor = new THREE.Color(
+			tagColorMap.get(selectedBookmark.tags.split(' ')[0])
+		);
+
 		relatedBookmarks.forEach((relatedBookmark) => {
-			const relatedMatrix = new THREE.Matrix4();
-			instancedMesh.getMatrixAt(bookmarksData.indexOf(relatedBookmark), relatedMatrix);
-			const relatedPosition = new THREE.Vector3();
-			relatedPosition.setFromMatrixPosition(relatedMatrix);
+			const relatedIndex = bookmarksData.indexOf(relatedBookmark);
+			const relatedNode = graphNodes[relatedIndex];
+			const relatedPosition = new THREE.Vector3(
+				relatedNode.x || 0,
+				relatedNode.y || 0,
+				relatedNode.z || 0
+			);
 
-			// Calculate shared tags for line intensity
 			const selectedTags = new Set(selectedBookmark.tags.split(' '));
 			const relatedTags = new Set(relatedBookmark.tags.split(' '));
 			const sharedTags = Array.from(selectedTags).filter((tag) => relatedTags.has(tag));
-			const relationStrength = sharedTags.length / Math.max(selectedTags.size, relatedTags.size);
+			const relationStrength =
+				sharedTags.length / Math.max(selectedTags.size, relatedTags.size);
 
-			// Create line geometry
 			const lineGeometry = new LineGeometry();
 			lineGeometry.setPositions([
 				selectedPosition.x,
@@ -246,22 +369,20 @@
 				relatedPosition.z
 			]);
 
-			// Create enhanced line material with improved visibility
 			const lineMaterial = new LineMaterial({
-				color: 0x00ffff, // Bright cyan color for better visibility
-				linewidth: 0.5 + relationStrength * 0.005, // Increased base width and scaling
+				color: selectedColor,
+				linewidth: 0.5 + relationStrength * 0.005,
 				vertexColors: false,
 				dashed: false,
 				alphaToCoverage: true,
 				transparent: true,
-				opacity: 0.5 + relationStrength * 0.4, // Increased base opacity
-				blending: THREE.AdditiveBlending, // Add additive blending for a glowing effect
+				opacity: 0.3 + relationStrength * 0.5,
+				blending: THREE.AdditiveBlending,
 				depthTest: true,
-				depthWrite: false // Prevent lines from being obscured by other objects
+				depthWrite: false
 			});
 			lineMaterial.resolution.set(container.clientWidth, container.clientHeight);
 
-			// Create line
 			const line = new Line2(lineGeometry, lineMaterial);
 			lines.push(line);
 			lineGroup.add(line);
@@ -270,90 +391,9 @@
 		scene.add(lineGroup);
 	};
 
-	const calculatePositions = (count, distributionType = 'surface') => {
-		const positions = [];
-
-		for (let i = 0; i < count; i++) {
-			const theta = Math.acos(2 * Math.random() - 1); // Polar angle
-			const phi = 2 * Math.PI * Math.random(); // Azimuthal angle
-
-			const radius =
-				distributionType === 'surface'
-					? 100 // sphereRadius
-					: 100 - 50 + Math.random() * 50; // sphereRadius - sphereThickness to sphereRadius
-
-			const x = radius * Math.sin(theta) * Math.cos(phi);
-			const y = radius * Math.sin(theta) * Math.sin(phi);
-			const z = radius * Math.cos(theta);
-
-			positions.push(new THREE.Vector3(x, y, z));
-		}
-
-		return positions;
-	};
-
-	const createBookmarkMeshes = (bookmarks) => {
-		// Extract unique tags
-		const uniqueTags = getUniqueTags(bookmarks);
-
-		// Generate color mapping for tags
-		tagColorMap = generateTagColorMap(uniqueTags);
-
-		// Shared geometry and material
-		const geometry = new THREE.SphereGeometry(sphereBaseSize, 8, 8);
-
-		// Use MeshStandardMaterial for better lighting and realism
-		const material = new THREE.MeshStandardMaterial({
-			vertexColors: true, // Important for per-instance colors
-			roughness: 0.01, // Reduced roughness for shinier surfaces
-			metalness: 0.2,
-			emissive: new THREE.Color(0xf542b3), // Emissive color set to white
-			emissiveIntensity: 0.4 // Moderate emissive intensity
-		});
-
-		// Create InstancedMesh
-		instancedMesh = new THREE.InstancedMesh(geometry, material, bookmarks.length);
-
-		// Enable instance color attribute
-		const colors = [];
-		const dummy = new THREE.Object3D();
-
-		// Calculate positions
-		const positions = calculatePositions(bookmarks.length, 'surface'); // Use 'surface' or 'volume'
-
-		bookmarks.forEach((bookmark, index) => {
-			const tags = bookmark.tags.split(' ');
-
-			// Determine primary tag (you can define your own logic for primary tag)
-			const primaryTag = tags[0]; // For simplicity, using the first tag as primary
-
-			// Get color for primary tag
-			const tagColor = new THREE.Color(tagColorMap.get(primaryTag));
-
-			// Set position and scale using dummy Object3D
-			dummy.position.copy(positions[index]);
-
-			// Optionally scale based on number of tags or other properties
-			const size = sphereBaseSize + (tags.length / 10) * (sphereMaxSize - sphereBaseSize);
-			dummy.scale.set(size, size, size);
-			dummy.updateMatrix();
-			instancedMesh.setMatrixAt(index, dummy.matrix);
-
-			// Assign color
-			colors.push(tagColor.r, tagColor.g, tagColor.b);
-
-			// Map instance ID to bookmark
-			instanceIdToBookmark.set(index, bookmark);
-		});
-
-		// Add color attribute
-		instancedMesh.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(colors), 3);
-		instancedMesh.instanceColor.needsUpdate = true;
-
-		scene.add(instancedMesh);
-	};
-
 	const onMouseMove = (event) => {
+		if (!instancedMesh) return;
+
 		const rect = container.getBoundingClientRect();
 		mouse.x = ((event.clientX - rect.left) / container.clientWidth) * 2 - 1;
 		mouse.y = -((event.clientY - rect.top) / container.clientHeight) * 2 + 1;
@@ -362,7 +402,6 @@
 		const intersects = raycaster.intersectObject(instancedMesh);
 
 		if (selectedBookmarks.length === 0) {
-			// Reset all instance colors
 			bookmarksData.forEach((bookmark, index) => {
 				const primaryTag = bookmark.tags.split(' ')[0];
 				const tagColor = new THREE.Color(tagColorMap.get(primaryTag));
@@ -373,16 +412,14 @@
 			if (intersects.length > 0) {
 				const instanceId = intersects[0].instanceId;
 				if (instanceId !== null) {
-					// Highlight the hovered instance by darkening its color
 					const originalColor = new THREE.Color(
 						tagColorMap.get(instanceIdToBookmark.get(instanceId).tags.split(' ')[0])
 					);
-					const highlightColor = originalColor.clone().multiplyScalar(0.7); // Darken the color
+					const highlightColor = originalColor.clone().multiplyScalar(0.7);
 					instancedMesh.setColorAt(instanceId, highlightColor);
 					instancedMesh.instanceColor.needsUpdate = true;
 					container.style.cursor = 'pointer';
 
-					// Set hoveredBookmark for tooltip
 					hoveredBookmark = instanceIdToBookmark.get(instanceId);
 					tooltipX = event.clientX;
 					tooltipY = event.clientY;
@@ -399,6 +436,8 @@
 	};
 
 	const onMouseClick = (event) => {
+		if (!instancedMesh) return;
+
 		raycaster.setFromCamera(mouse, camera);
 		const intersects = raycaster.intersectObject(instancedMesh);
 
@@ -408,7 +447,6 @@
 				const clickedBookmark = instanceIdToBookmark.get(instanceId);
 				const clickedTags = new Set(clickedBookmark.tags.split(' '));
 
-				// Find all bookmarks that share at least one tag
 				selectedBookmarks = bookmarksData
 					.filter((bookmark) => {
 						const bookmarkTags = new Set(bookmark.tags.split(' '));
@@ -420,21 +458,23 @@
 						return bShared - aShared;
 					});
 
-				// Update colors as before
 				bookmarksData.forEach((bookmark, index) => {
 					const isRelated = selectedBookmarks.some((b) => b.hash === bookmark.hash);
 					if (isRelated) {
-						const tagColor = new THREE.Color(tagColorMap.get(bookmark.tags.split(' ')[0]));
+						const tagColor = new THREE.Color(
+							tagColorMap.get(bookmark.tags.split(' ')[0])
+						);
 						const highlightColor = tagColor.clone().multiplyScalar(0.7);
 						instancedMesh.setColorAt(index, highlightColor);
 					} else {
-						const tagColor = new THREE.Color(tagColorMap.get(bookmark.tags.split(' ')[0]));
+						const tagColor = new THREE.Color(
+							tagColorMap.get(bookmark.tags.split(' ')[0])
+						);
 						instancedMesh.setColorAt(index, tagColor);
 					}
 				});
 				instancedMesh.instanceColor.needsUpdate = true;
 
-				// Create connection lines
 				createConnectionLines(clickedBookmark, selectedBookmarks);
 			}
 		} else {
@@ -445,12 +485,13 @@
 	const animate = () => {
 		requestAnimationFrame(animate);
 
-		if (controls) {
-			controls.update();
+		// Update node positions while simulation is settling
+		if (simulationRunning && selectedBookmarks.length === 0) {
+			updateNodePositions();
 		}
 
-		// renderer.render(scene, camera); // Remove this line
-		composer.render(); // Use composer for rendering with post-processing
+		if (controls) controls.update();
+		composer.render();
 	};
 
 	const onWindowResize = () => {
@@ -470,6 +511,7 @@
 		init();
 
 		return () => {
+			if (simulation) simulation.stop();
 			window.removeEventListener('resize', onWindowResize);
 			if (throttledMouseMove) {
 				container.removeEventListener('mousemove', throttledMouseMove);
@@ -479,9 +521,7 @@
 				window.removeEventListener('keydown', handleKeyDown);
 			}
 
-			if (controls) {
-				controls.dispose();
-			}
+			if (controls) controls.dispose();
 
 			if (instancedMesh) {
 				instancedMesh.geometry.dispose();
@@ -497,12 +537,8 @@
 				lines = [];
 			}
 
-			if (composer) {
-				composer.dispose();
-			}
-
+			if (composer) composer.dispose();
 			renderer?.dispose();
-
 			if (container && renderer) {
 				container.removeChild(renderer.domElement);
 			}
@@ -583,14 +619,5 @@
 	:global(body) {
 		margin: 0;
 		overflow: hidden;
-	}
-	.tooltip {
-		position: absolute;
-		background-color: rgba(0, 0, 0, 0.7);
-		color: white;
-		padding: 8px;
-		border-radius: 4px;
-		pointer-events: none;
-		white-space: nowrap;
 	}
 </style>
