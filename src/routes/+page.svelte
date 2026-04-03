@@ -2,6 +2,7 @@
 <script>
 	import { onMount } from 'svelte';
 	import { base } from '$app/paths';
+	import { page } from '$app/stores';
 	import * as THREE from 'three';
 	import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls';
 	import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer';
@@ -12,6 +13,8 @@
 	import { LineGeometry } from 'three/examples/jsm/lines/LineGeometry';
 	import { Line2 } from 'three/examples/jsm/lines/Line2';
 	import { throttle } from 'lodash';
+	import IntroGuide from '$lib/components/garden/IntroGuide.svelte';
+	import { DEFAULT_LENS, LENS_OPTIONS, normalizeLens } from '$lib/bookmarks/lens.js';
 
 	let container;
 	let renderer;
@@ -31,6 +34,10 @@
 	let isLoading = false; // Loading state for bookmark fetch
 	let throttledMouseMove; // Store throttled function for cleanup
 	let handleKeyDown; // Store keyboard handler for cleanup
+	let showIntroGuide = true;
+	let activeLens = DEFAULT_LENS;
+	let activeLensLabel = 'Closest';
+	let queryFocusHandled = false;
 
 	// Configuration
 	const sphereBaseSize = 1.0;
@@ -91,6 +98,37 @@
 			});
 			lines = [];
 		}
+	};
+
+	const selectBookmark = (clickedBookmark) => {
+		const clickedTags = new Set(clickedBookmark.tags.split(' '));
+
+		selectedBookmarks = bookmarksData
+			.filter((bookmark) => {
+				const bookmarkTags = new Set(bookmark.tags.split(' '));
+				return Array.from(bookmarkTags).some((tag) => clickedTags.has(tag));
+			})
+			.sort((a, b) => {
+				const aShared = a.tags.split(' ').filter((tag) => clickedTags.has(tag)).length;
+				const bShared = b.tags.split(' ').filter((tag) => clickedTags.has(tag)).length;
+				return bShared - aShared;
+			});
+
+		bookmarksData.forEach((bookmark, index) => {
+			const isRelated = selectedBookmarks.some((b) => b.hash === bookmark.hash);
+			if (isRelated) {
+				const tagColor = new THREE.Color(tagColorMap.get(bookmark.tags.split(' ')[0]));
+				const highlightColor = tagColor.clone().multiplyScalar(0.7);
+				instancedMesh.setColorAt(index, highlightColor);
+			} else {
+				const tagColor = new THREE.Color(tagColorMap.get(bookmark.tags.split(' ')[0]));
+				instancedMesh.setColorAt(index, tagColor);
+			}
+		});
+
+		instancedMesh.instanceColor.needsUpdate = true;
+		createConnectionLines(clickedBookmark, selectedBookmarks);
+		showIntroGuide = false;
 	};
 
 	const init = () => {
@@ -195,6 +233,15 @@
 			if (bookmarks.length > 0) {
 				bookmarksData = bookmarks;
 				createBookmarkMeshes(bookmarks);
+
+				const focusHash = new URLSearchParams(window.location.search).get('focus');
+				if (focusHash && !queryFocusHandled) {
+					const bookmark = bookmarksData.find((entry) => entry.hash === focusHash) ?? bookmarksData[0];
+					if (bookmark) {
+						selectBookmark(bookmark);
+					}
+					queryFocusHandled = true;
+				}
 			}
 		} catch (error) {
 			console.error('Failed to load bookmarks:', error);
@@ -405,37 +452,7 @@
 		if (intersects.length > 0) {
 			const instanceId = intersects[0].instanceId;
 			if (instanceId !== null) {
-				const clickedBookmark = instanceIdToBookmark.get(instanceId);
-				const clickedTags = new Set(clickedBookmark.tags.split(' '));
-
-				// Find all bookmarks that share at least one tag
-				selectedBookmarks = bookmarksData
-					.filter((bookmark) => {
-						const bookmarkTags = new Set(bookmark.tags.split(' '));
-						return Array.from(bookmarkTags).some((tag) => clickedTags.has(tag));
-					})
-					.sort((a, b) => {
-						const aShared = a.tags.split(' ').filter((tag) => clickedTags.has(tag)).length;
-						const bShared = b.tags.split(' ').filter((tag) => clickedTags.has(tag)).length;
-						return bShared - aShared;
-					});
-
-				// Update colors as before
-				bookmarksData.forEach((bookmark, index) => {
-					const isRelated = selectedBookmarks.some((b) => b.hash === bookmark.hash);
-					if (isRelated) {
-						const tagColor = new THREE.Color(tagColorMap.get(bookmark.tags.split(' ')[0]));
-						const highlightColor = tagColor.clone().multiplyScalar(0.7);
-						instancedMesh.setColorAt(index, highlightColor);
-					} else {
-						const tagColor = new THREE.Color(tagColorMap.get(bookmark.tags.split(' ')[0]));
-						instancedMesh.setColorAt(index, tagColor);
-					}
-				});
-				instancedMesh.instanceColor.needsUpdate = true;
-
-				// Create connection lines
-				createConnectionLines(clickedBookmark, selectedBookmarks);
+				selectBookmark(instanceIdToBookmark.get(instanceId));
 			}
 		} else {
 			clearSelection();
@@ -466,7 +483,26 @@
 		}
 	};
 
+	$: activeLens = normalizeLens($page.url.searchParams.get('lens'));
+	$: activeLensLabel = LENS_OPTIONS.find((option) => option.id === activeLens)?.label ?? 'Closest';
+
 	onMount(() => {
+		const focusHash = new URLSearchParams(window.location.search).get('focus');
+		if (focusHash) {
+			showIntroGuide = false;
+			if (selectedBookmarks.length === 0) {
+				selectedBookmarks = [
+					{
+						hash: focusHash,
+						description: 'Loading focused bookmark...',
+						extended: 'Preparing related paths.',
+						tags: 'focus',
+						href: '#'
+					}
+				];
+			}
+		}
+
 		init();
 
 		return () => {
@@ -511,11 +547,18 @@
 </script>
 
 <div class="relative w-full h-screen">
+	<IntroGuide
+		visible={showIntroGuide && selectedBookmarks.length === 0}
+		onStart={() => (showIntroGuide = false)}
+		onDismiss={() => (showIntroGuide = false)}
+	/>
+	<div data-testid="active-lens" class="sr-only">{activeLensLabel}</div>
+
 	<div
 		bind:this={container}
 		class="absolute inset-0 w-full h-full bg-black"
 		style="touch-action: none;"
-	/>
+	></div>
 
 	<!-- Loading spinner -->
 	{#if isLoading}
@@ -531,6 +574,7 @@
 
 	{#if selectedBookmarks.length > 0}
 		<div
+			data-testid="focus-rail"
 			class="absolute top-4 right-4 p-4 bg-white/90 backdrop-blur-sm rounded-lg shadow-lg max-w-md max-h-[80vh] overflow-y-auto"
 		>
 			<div class="flex justify-between items-center mb-4">
@@ -583,14 +627,5 @@
 	:global(body) {
 		margin: 0;
 		overflow: hidden;
-	}
-	.tooltip {
-		position: absolute;
-		background-color: rgba(0, 0, 0, 0.7);
-		color: white;
-		padding: 8px;
-		border-radius: 4px;
-		pointer-events: none;
-		white-space: nowrap;
 	}
 </style>
