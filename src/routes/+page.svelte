@@ -160,7 +160,8 @@
 		window.addEventListener('keydown', handleKeyDown);
 
 		scene = new THREE.Scene();
-		scene.background = new THREE.Color(0x000000);
+		scene.background = new THREE.Color(0x151a14);
+		scene.fog = new THREE.FogExp2(0x1e2a1d, 0.0038);
 
 		camera = new THREE.PerspectiveCamera(
 			75, // Increased FOV
@@ -208,7 +209,7 @@
 		controls.maxPolarAngle = Math.PI / 1.5;
 
 		// Ambient Light
-		const ambientLight = new THREE.AmbientLight(0xffffff, 1.0); // Increased intensity
+		const ambientLight = new THREE.AmbientLight(0xf2eddc, 1.35);
 		scene.add(ambientLight);
 
 		// Directional Light
@@ -224,8 +225,8 @@
 
 		// Optional: Add PointLight or SpotLight
 
-		const pointLight = new THREE.PointLight(0xffffff, 1, 100);
-		pointLight.position.set(50, 50, 50);
+		const pointLight = new THREE.PointLight(0xd7f0c8, 1.8, 240);
+		pointLight.position.set(30, 50, 40);
 		scene.add(pointLight);
 
 		loadBookmarks();
@@ -306,7 +307,7 @@
 
 			// Create enhanced line material with improved visibility
 			const lineMaterial = new LineMaterial({
-				color: 0x00ffff, // Bright cyan color for better visibility
+				color: 0x9acb8f,
 				linewidth: 0.5 + relationStrength * 0.005, // Increased base width and scaling
 				vertexColors: false,
 				dashed: false,

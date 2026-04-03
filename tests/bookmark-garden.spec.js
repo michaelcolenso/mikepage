@@ -24,3 +24,10 @@ test('switches lens modes from the UI', async ({ page }) => {
 	await page.getByRole('button', { name: 'Surprising' }).click();
 	await expect(page.locator('[data-testid="active-lens"]')).toHaveText('Surprising');
 });
+
+test('clears focus and returns to resting state', async ({ page }) => {
+	await page.goto('/mikepage/?focus=test-seed&lens=closest');
+	await page.getByRole('button', { name: /^Close$/ }).click();
+	await expect(page.locator('[data-testid="focus-rail"]')).toHaveCount(0);
+	await expect(page.locator('[data-testid="intro-guide"]')).toHaveCount(0);
+});
