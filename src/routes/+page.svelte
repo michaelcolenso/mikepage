@@ -14,7 +14,10 @@
 	import { Line2 } from 'three/examples/jsm/lines/Line2';
 	import { throttle } from 'lodash';
 	import IntroGuide from '$lib/components/garden/IntroGuide.svelte';
-	import { DEFAULT_LENS, LENS_OPTIONS, normalizeLens } from '$lib/bookmarks/lens.js';
+	import PathLens from '$lib/components/garden/PathLens.svelte';
+	import FocusRail from '$lib/components/garden/FocusRail.svelte';
+	import { buildRelatedBookmarks } from '$lib/bookmarks/relations.js';
+	import { DEFAULT_LENS, normalizeLens } from '$lib/bookmarks/lens.js';
 
 	let container;
 	let renderer;
@@ -36,8 +39,9 @@
 	let handleKeyDown; // Store keyboard handler for cleanup
 	let showIntroGuide = true;
 	let activeLens = DEFAULT_LENS;
-	let activeLensLabel = 'Closest';
 	let queryFocusHandled = false;
+	let selectedBookmark = null;
+	let relatedBookmarks = [];
 
 	// Configuration
 	const sphereBaseSize = 1.0;
@@ -81,6 +85,8 @@
 	// Helper function to clear selection
 	const clearSelection = () => {
 		selectedBookmarks = [];
+		relatedBookmarks = [];
+		selectedBookmark = null;
 		// Reset all colors
 		bookmarksData.forEach((bookmark, index) => {
 			const primaryTag = bookmark.tags.split(' ')[0];
@@ -102,6 +108,8 @@
 
 	const selectBookmark = (clickedBookmark) => {
 		const clickedTags = new Set(clickedBookmark.tags.split(' '));
+		selectedBookmark = clickedBookmark;
+		relatedBookmarks = buildRelatedBookmarks(clickedBookmark, bookmarksData, activeLens).slice(0, 12);
 
 		selectedBookmarks = bookmarksData
 			.filter((bookmark) => {
@@ -127,7 +135,10 @@
 		});
 
 		instancedMesh.instanceColor.needsUpdate = true;
-		createConnectionLines(clickedBookmark, selectedBookmarks);
+		createConnectionLines(
+			clickedBookmark,
+			selectedBookmarks.filter((bookmark) => bookmark.hash !== clickedBookmark.hash)
+		);
 		showIntroGuide = false;
 	};
 
@@ -484,22 +495,35 @@
 	};
 
 	$: activeLens = normalizeLens($page.url.searchParams.get('lens'));
-	$: activeLensLabel = LENS_OPTIONS.find((option) => option.id === activeLens)?.label ?? 'Closest';
+	$: if (selectedBookmark && bookmarksData.length > 0) {
+		relatedBookmarks = buildRelatedBookmarks(selectedBookmark, bookmarksData, activeLens).slice(0, 12);
+	}
 
 	onMount(() => {
 		const focusHash = new URLSearchParams(window.location.search).get('focus');
 		if (focusHash) {
 			showIntroGuide = false;
 			if (selectedBookmarks.length === 0) {
-				selectedBookmarks = [
+				selectedBookmark = {
+					hash: focusHash,
+					description: 'Loading focused bookmark...',
+					extended: 'Preparing related paths.',
+					tags: 'focus',
+					href: '#'
+				};
+				relatedBookmarks = [
 					{
-						hash: focusHash,
-						description: 'Loading focused bookmark...',
-						extended: 'Preparing related paths.',
-						tags: 'focus',
-						href: '#'
+						bookmark: {
+							hash: `${focusHash}-loading`,
+							description: 'Loading related paths...',
+							extended: '',
+							tags: 'focus',
+							href: '#'
+						},
+						explanation: 'Why this path: loading relationship context.'
 					}
 				];
+				selectedBookmarks = [selectedBookmark];
 			}
 		}
 
@@ -552,7 +576,7 @@
 		onStart={() => (showIntroGuide = false)}
 		onDismiss={() => (showIntroGuide = false)}
 	/>
-	<div data-testid="active-lens" class="sr-only">{activeLensLabel}</div>
+	<PathLens activeLens={activeLens} onChange={(lens) => (activeLens = lens)} />
 
 	<div
 		bind:this={container}
@@ -572,45 +596,12 @@
 		</div>
 	{/if}
 
-	{#if selectedBookmarks.length > 0}
-		<div
-			data-testid="focus-rail"
-			class="absolute top-4 right-4 p-4 bg-white/90 backdrop-blur-sm rounded-lg shadow-lg max-w-md max-h-[80vh] overflow-y-auto"
-		>
-			<div class="flex justify-between items-center mb-4">
-				<h2 class="text-lg font-bold text-gray-900">
-					Related Bookmarks ({selectedBookmarks.length})
-				</h2>
-				<button class="text-gray-500 hover:text-gray-700" on:click={clearSelection}>
-					×
-				</button>
-			</div>
-
-			<div class="space-y-4">
-				{#each selectedBookmarks as bookmark}
-					<div class="p-3 bg-white/50 rounded-lg">
-						<h3 class="text-lg font-semibold mb-2 text-gray-900">{bookmark.description}</h3>
-						<p class="text-sm text-gray-600 mb-2">{bookmark.extended}</p>
-						<div class="flex flex-wrap gap-2 mb-2">
-							{#each bookmark.tags.split(' ') as tag}
-								<span class="px-2 py-1 bg-blue-100 text-blue-800 rounded-full text-xs">
-									{tag}
-								</span>
-							{/each}
-						</div>
-						<a
-							href={bookmark.href}
-							target="_blank"
-							rel="noopener noreferrer"
-							class="text-blue-600 hover:text-blue-800 text-sm inline-flex items-center"
-						>
-							Open Link →
-						</a>
-					</div>
-				{/each}
-			</div>
-		</div>
-	{/if}
+	<FocusRail
+		selectedBookmark={selectedBookmark}
+		related={relatedBookmarks}
+		activeLens={activeLens}
+		onClose={clearSelection}
+	/>
 
 	{#if hoveredBookmark}
 		<div
