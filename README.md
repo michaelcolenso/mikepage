@@ -7,12 +7,12 @@ This project is an interactive 3D visualization of bookmarks using Three.js, Sve
 
 ## Features
 
-- **Interactive 3D Visualization**: Leveraging Three.js, bookmarks are represented as 3D nodes within a sphere, creating an immersive experience.
-- **Bookmark Tag Coloring**: Each bookmark tag is assigned a unique color, making it easy to identify content categories.
-- **Connection Lines**: Related bookmarks are visually connected, with line strength and color indicating the strength of the relationship based on shared tags.
-- **Tooltip with Bookmark Info**: Hovering over a node reveals a tooltip with bookmark details, and clicking on a node displays a list of related bookmarks.
-- **Bloom and Post-Processing Effects**: Using post-processing with Unreal Bloom Pass for enhanced visual appeal.
-- **Camera and Orbit Controls**: Provides smooth navigation and exploration of the 3D space.
+- **Guided Canopy Scene**: Bookmark clusters live in an atmospheric 3D garden with softened lighting, fog depth, and path-focused motion.
+- **First-Visit Intro Guide**: A lightweight onboarding overlay explains how to start exploring.
+- **Path Lens Controls**: Switch between `Closest`, `Surprising`, and `By tag family` exploration modes.
+- **Editorial Focus Rail**: Selection opens a readable side rail with summary context, related paths, and relationship explanations.
+- **Responsive Focus Panel**: On smaller screens the focus rail converts into a bottom-sheet layout.
+- **Reduced-Motion Friendly**: Motion is toned down when reduced-motion is requested while preserving interaction clarity.
 
 ## Setup and Installation
 

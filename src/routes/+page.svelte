@@ -2,6 +2,7 @@
 <script>
 	import { onMount } from 'svelte';
 	import { base } from '$app/paths';
+	import { page } from '$app/stores';
 	import * as THREE from 'three';
 	import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls';
 	import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer';
@@ -12,6 +13,11 @@
 	import { LineGeometry } from 'three/examples/jsm/lines/LineGeometry';
 	import { Line2 } from 'three/examples/jsm/lines/Line2';
 	import { throttle } from 'lodash';
+	import IntroGuide from '$lib/components/garden/IntroGuide.svelte';
+	import PathLens from '$lib/components/garden/PathLens.svelte';
+	import FocusRail from '$lib/components/garden/FocusRail.svelte';
+	import { buildRelatedBookmarks } from '$lib/bookmarks/relations.js';
+	import { DEFAULT_LENS, normalizeLens } from '$lib/bookmarks/lens.js';
 
 	let container;
 	let renderer;
@@ -31,6 +37,13 @@
 	let isLoading = false; // Loading state for bookmark fetch
 	let throttledMouseMove; // Store throttled function for cleanup
 	let handleKeyDown; // Store keyboard handler for cleanup
+	let showIntroGuide = true;
+	let activeLens = DEFAULT_LENS;
+	let queryFocusHandled = false;
+	let selectedBookmark = null;
+	let relatedBookmarks = [];
+	let isCompactLayout = false;
+	let prefersReducedMotion = false;
 
 	// Configuration
 	const sphereBaseSize = 1.0;
@@ -74,6 +87,8 @@
 	// Helper function to clear selection
 	const clearSelection = () => {
 		selectedBookmarks = [];
+		relatedBookmarks = [];
+		selectedBookmark = null;
 		// Reset all colors
 		bookmarksData.forEach((bookmark, index) => {
 			const primaryTag = bookmark.tags.split(' ')[0];
@@ -91,6 +106,42 @@
 			});
 			lines = [];
 		}
+	};
+
+	const selectBookmark = (clickedBookmark) => {
+		const clickedTags = new Set(clickedBookmark.tags.split(' '));
+		selectedBookmark = clickedBookmark;
+		relatedBookmarks = buildRelatedBookmarks(clickedBookmark, bookmarksData, activeLens).slice(0, 12);
+
+		selectedBookmarks = bookmarksData
+			.filter((bookmark) => {
+				const bookmarkTags = new Set(bookmark.tags.split(' '));
+				return Array.from(bookmarkTags).some((tag) => clickedTags.has(tag));
+			})
+			.sort((a, b) => {
+				const aShared = a.tags.split(' ').filter((tag) => clickedTags.has(tag)).length;
+				const bShared = b.tags.split(' ').filter((tag) => clickedTags.has(tag)).length;
+				return bShared - aShared;
+			});
+
+		bookmarksData.forEach((bookmark, index) => {
+			const isRelated = selectedBookmarks.some((b) => b.hash === bookmark.hash);
+			if (isRelated) {
+				const tagColor = new THREE.Color(tagColorMap.get(bookmark.tags.split(' ')[0]));
+				const highlightColor = tagColor.clone().multiplyScalar(0.7);
+				instancedMesh.setColorAt(index, highlightColor);
+			} else {
+				const tagColor = new THREE.Color(tagColorMap.get(bookmark.tags.split(' ')[0]));
+				instancedMesh.setColorAt(index, tagColor);
+			}
+		});
+
+		instancedMesh.instanceColor.needsUpdate = true;
+		createConnectionLines(
+			clickedBookmark,
+			selectedBookmarks.filter((bookmark) => bookmark.hash !== clickedBookmark.hash)
+		);
+		showIntroGuide = false;
 	};
 
 	const init = () => {
@@ -111,7 +162,8 @@
 		window.addEventListener('keydown', handleKeyDown);
 
 		scene = new THREE.Scene();
-		scene.background = new THREE.Color(0x000000);
+		scene.background = new THREE.Color(0x151a14);
+		scene.fog = new THREE.FogExp2(0x1e2a1d, 0.0038);
 
 		camera = new THREE.PerspectiveCamera(
 			75, // Increased FOV
@@ -159,7 +211,7 @@
 		controls.maxPolarAngle = Math.PI / 1.5;
 
 		// Ambient Light
-		const ambientLight = new THREE.AmbientLight(0xffffff, 1.0); // Increased intensity
+		const ambientLight = new THREE.AmbientLight(0xf2eddc, 1.35);
 		scene.add(ambientLight);
 
 		// Directional Light
@@ -175,11 +227,13 @@
 
 		// Optional: Add PointLight or SpotLight
 
-		const pointLight = new THREE.PointLight(0xffffff, 1, 100);
-		pointLight.position.set(50, 50, 50);
+		const pointLight = new THREE.PointLight(0xd7f0c8, 1.8, 240);
+		pointLight.position.set(30, 50, 40);
 		scene.add(pointLight);
 
 		loadBookmarks();
+		isCompactLayout = window.innerWidth < 768;
+		prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 		animate();
 
 		window.addEventListener('resize', onWindowResize);
@@ -195,6 +249,15 @@
 			if (bookmarks.length > 0) {
 				bookmarksData = bookmarks;
 				createBookmarkMeshes(bookmarks);
+
+				const focusHash = new URLSearchParams(window.location.search).get('focus');
+				if (focusHash && !queryFocusHandled) {
+					const bookmark = bookmarksData.find((entry) => entry.hash === focusHash) ?? bookmarksData[0];
+					if (bookmark) {
+						selectBookmark(bookmark);
+					}
+					queryFocusHandled = true;
+				}
 			}
 		} catch (error) {
 			console.error('Failed to load bookmarks:', error);
@@ -248,7 +311,7 @@
 
 			// Create enhanced line material with improved visibility
 			const lineMaterial = new LineMaterial({
-				color: 0x00ffff, // Bright cyan color for better visibility
+				color: 0x9acb8f,
 				linewidth: 0.5 + relationStrength * 0.005, // Increased base width and scaling
 				vertexColors: false,
 				dashed: false,
@@ -405,37 +468,7 @@
 		if (intersects.length > 0) {
 			const instanceId = intersects[0].instanceId;
 			if (instanceId !== null) {
-				const clickedBookmark = instanceIdToBookmark.get(instanceId);
-				const clickedTags = new Set(clickedBookmark.tags.split(' '));
-
-				// Find all bookmarks that share at least one tag
-				selectedBookmarks = bookmarksData
-					.filter((bookmark) => {
-						const bookmarkTags = new Set(bookmark.tags.split(' '));
-						return Array.from(bookmarkTags).some((tag) => clickedTags.has(tag));
-					})
-					.sort((a, b) => {
-						const aShared = a.tags.split(' ').filter((tag) => clickedTags.has(tag)).length;
-						const bShared = b.tags.split(' ').filter((tag) => clickedTags.has(tag)).length;
-						return bShared - aShared;
-					});
-
-				// Update colors as before
-				bookmarksData.forEach((bookmark, index) => {
-					const isRelated = selectedBookmarks.some((b) => b.hash === bookmark.hash);
-					if (isRelated) {
-						const tagColor = new THREE.Color(tagColorMap.get(bookmark.tags.split(' ')[0]));
-						const highlightColor = tagColor.clone().multiplyScalar(0.7);
-						instancedMesh.setColorAt(index, highlightColor);
-					} else {
-						const tagColor = new THREE.Color(tagColorMap.get(bookmark.tags.split(' ')[0]));
-						instancedMesh.setColorAt(index, tagColor);
-					}
-				});
-				instancedMesh.instanceColor.needsUpdate = true;
-
-				// Create connection lines
-				createConnectionLines(clickedBookmark, selectedBookmarks);
+				selectBookmark(instanceIdToBookmark.get(instanceId));
 			}
 		} else {
 			clearSelection();
@@ -449,12 +482,17 @@
 			controls.update();
 		}
 
+		if (!prefersReducedMotion && instancedMesh) {
+			instancedMesh.rotation.y += 0.0006;
+		}
+
 		// renderer.render(scene, camera); // Remove this line
 		composer.render(); // Use composer for rendering with post-processing
 	};
 
 	const onWindowResize = () => {
 		if (camera && renderer && container) {
+			isCompactLayout = window.innerWidth < 768;
 			camera.aspect = container.clientWidth / container.clientHeight;
 			camera.updateProjectionMatrix();
 			renderer.setSize(container.clientWidth, container.clientHeight);
@@ -466,7 +504,42 @@
 		}
 	};
 
+	$: activeLens = normalizeLens($page.url.searchParams.get('lens'));
+	$: if (selectedBookmark && bookmarksData.length > 0) {
+		relatedBookmarks = buildRelatedBookmarks(selectedBookmark, bookmarksData, activeLens).slice(0, 12);
+	}
+
 	onMount(() => {
+		isCompactLayout = window.innerWidth < 768;
+		prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+		const focusHash = new URLSearchParams(window.location.search).get('focus');
+		if (focusHash) {
+			showIntroGuide = false;
+			if (selectedBookmarks.length === 0) {
+				selectedBookmark = {
+					hash: focusHash,
+					description: 'Loading focused bookmark...',
+					extended: 'Preparing related paths.',
+					tags: 'focus',
+					href: '#'
+				};
+				relatedBookmarks = [
+					{
+						bookmark: {
+							hash: `${focusHash}-loading`,
+							description: 'Loading related paths...',
+							extended: '',
+							tags: 'focus',
+							href: '#'
+						},
+						explanation: 'Why this path: loading relationship context.'
+					}
+				];
+				selectedBookmarks = [selectedBookmark];
+			}
+		}
+
 		init();
 
 		return () => {
@@ -511,11 +584,18 @@
 </script>
 
 <div class="relative w-full h-screen">
+	<IntroGuide
+		visible={showIntroGuide && selectedBookmarks.length === 0}
+		onStart={() => (showIntroGuide = false)}
+		onDismiss={() => (showIntroGuide = false)}
+	/>
+	<PathLens activeLens={activeLens} onChange={(lens) => (activeLens = lens)} />
+
 	<div
 		bind:this={container}
 		class="absolute inset-0 w-full h-full bg-black"
 		style="touch-action: none;"
-	/>
+	></div>
 
 	<!-- Loading spinner -->
 	{#if isLoading}
@@ -529,44 +609,13 @@
 		</div>
 	{/if}
 
-	{#if selectedBookmarks.length > 0}
-		<div
-			class="absolute top-4 right-4 p-4 bg-white/90 backdrop-blur-sm rounded-lg shadow-lg max-w-md max-h-[80vh] overflow-y-auto"
-		>
-			<div class="flex justify-between items-center mb-4">
-				<h2 class="text-lg font-bold text-gray-900">
-					Related Bookmarks ({selectedBookmarks.length})
-				</h2>
-				<button class="text-gray-500 hover:text-gray-700" on:click={clearSelection}>
-					×
-				</button>
-			</div>
-
-			<div class="space-y-4">
-				{#each selectedBookmarks as bookmark}
-					<div class="p-3 bg-white/50 rounded-lg">
-						<h3 class="text-lg font-semibold mb-2 text-gray-900">{bookmark.description}</h3>
-						<p class="text-sm text-gray-600 mb-2">{bookmark.extended}</p>
-						<div class="flex flex-wrap gap-2 mb-2">
-							{#each bookmark.tags.split(' ') as tag}
-								<span class="px-2 py-1 bg-blue-100 text-blue-800 rounded-full text-xs">
-									{tag}
-								</span>
-							{/each}
-						</div>
-						<a
-							href={bookmark.href}
-							target="_blank"
-							rel="noopener noreferrer"
-							class="text-blue-600 hover:text-blue-800 text-sm inline-flex items-center"
-						>
-							Open Link →
-						</a>
-					</div>
-				{/each}
-			</div>
-		</div>
-	{/if}
+	<FocusRail
+		selectedBookmark={selectedBookmark}
+		related={relatedBookmarks}
+		activeLens={activeLens}
+		mobile={isCompactLayout}
+		onClose={clearSelection}
+	/>
 
 	{#if hoveredBookmark}
 		<div
@@ -583,14 +632,5 @@
 	:global(body) {
 		margin: 0;
 		overflow: hidden;
-	}
-	.tooltip {
-		position: absolute;
-		background-color: rgba(0, 0, 0, 0.7);
-		color: white;
-		padding: 8px;
-		border-radius: 4px;
-		pointer-events: none;
-		white-space: nowrap;
 	}
 </style>
