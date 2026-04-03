@@ -31,3 +31,16 @@ test('clears focus and returns to resting state', async ({ page }) => {
 	await expect(page.locator('[data-testid="focus-rail"]')).toHaveCount(0);
 	await expect(page.locator('[data-testid="intro-guide"]')).toHaveCount(0);
 });
+
+test('uses a bottom-sheet layout on small screens', async ({ page }) => {
+	await page.setViewportSize({ width: 390, height: 844 });
+	await page.goto('/mikepage/?focus=test-seed&lens=closest');
+	await expect(page.locator('[data-testid="focus-rail"]')).toHaveClass(/mobile/);
+});
+
+test('keeps the garden readable in reduced motion mode', async ({ page }) => {
+	await page.emulateMedia({ reducedMotion: 'reduce' });
+	await page.goto('/mikepage/?focus=test-seed&lens=closest');
+	await expect(page.locator('[data-testid="focus-rail"]')).toBeVisible();
+	await expect(page.getByText(/Why this path:/)).toBeVisible();
+});

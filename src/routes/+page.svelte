@@ -42,6 +42,8 @@
 	let queryFocusHandled = false;
 	let selectedBookmark = null;
 	let relatedBookmarks = [];
+	let isCompactLayout = false;
+	let prefersReducedMotion = false;
 
 	// Configuration
 	const sphereBaseSize = 1.0;
@@ -230,6 +232,8 @@
 		scene.add(pointLight);
 
 		loadBookmarks();
+		isCompactLayout = window.innerWidth < 768;
+		prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 		animate();
 
 		window.addEventListener('resize', onWindowResize);
@@ -478,12 +482,17 @@
 			controls.update();
 		}
 
+		if (!prefersReducedMotion && instancedMesh) {
+			instancedMesh.rotation.y += 0.0006;
+		}
+
 		// renderer.render(scene, camera); // Remove this line
 		composer.render(); // Use composer for rendering with post-processing
 	};
 
 	const onWindowResize = () => {
 		if (camera && renderer && container) {
+			isCompactLayout = window.innerWidth < 768;
 			camera.aspect = container.clientWidth / container.clientHeight;
 			camera.updateProjectionMatrix();
 			renderer.setSize(container.clientWidth, container.clientHeight);
@@ -501,6 +510,9 @@
 	}
 
 	onMount(() => {
+		isCompactLayout = window.innerWidth < 768;
+		prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
 		const focusHash = new URLSearchParams(window.location.search).get('focus');
 		if (focusHash) {
 			showIntroGuide = false;
@@ -601,6 +613,7 @@
 		selectedBookmark={selectedBookmark}
 		related={relatedBookmarks}
 		activeLens={activeLens}
+		mobile={isCompactLayout}
 		onClose={clearSelection}
 	/>
 
