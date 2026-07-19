@@ -51,7 +51,7 @@ The data file includes bookmarks with `"shared": "no"` (Pinboard's private flag)
 `tests/bookmark-garden.spec.js:19` — `getByText(/Why this path:/)` violates strict mode when more than one related card renders (the normal case). Change to `.first()`. The reduced-motion test at line 46 has the same latent bug and only passes by timing luck. Also `tests/test.js` is fully subsumed by the spec file — merge them.
 
 ### 9. CI has no quality gate
-`.github/workflows/deploy.yml` builds and deploys on push to main with no lint or test step, which is how #7 and #8 went unnoticed. Add a job running `npm run lint && npx playwright test` before deploy.
+`.github/workflows/deploy.yml` builds and deploys on push to main with no lint or test step, which is how #7 and #8 went unnoticed. Add a job before deploy that runs `npm run lint`, `npx playwright install --with-deps`, then `npx playwright test` — the browser install step is required on a fresh CI runner (see [Playwright CI docs](https://playwright.dev/docs/ci)).
 
 ---
 
