@@ -1,0 +1,22 @@
+{
+	"$schema": "./node_modules/wrangler/config-schema.json",
+	"name": "bookmarks-colenso-org",
+	"compatibility_date": "2026-08-16",
+	// Static-only Worker: `npm run build` emits the whole site into ./build via
+	// @sveltejs/adapter-static, and Wrangler uploads it as static assets. There is no
+	// `main` entry point, so no `assets.binding` either — assets are served directly.
+	"assets": {
+		"directory": "./build"
+	},
+	// Attaching the custom domain here makes `wrangler deploy` create and maintain the
+	// bookmarks.colenso.org DNS record, since the colenso.org zone is in the same account.
+	"routes": [
+		{
+			"pattern": "bookmarks.colenso.org",
+			"custom_domain": true
+		}
+	],
+	"observability": {
+		"enabled": true
+	}
+}
