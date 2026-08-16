@@ -61,8 +61,13 @@ This project is an interactive 3D visualization of bookmarks using Three.js, Sve
 ## Deployment
 
 The site is built as a static bundle by `@sveltejs/adapter-static` and deployed to
-**Cloudflare Workers** as [static assets](https://developers.cloudflare.com/workers/static-assets/),
-on every push to `main` (see `.github/workflows/deploy.yml`).
+**Cloudflare Workers** as [static assets](https://developers.cloudflare.com/workers/static-assets/).
+
+> **Pending step:** `.github/workflows/deploy.yml` still contains the old GitHub Pages job. Its
+> replacement lives at `docs/cloudflare-deploy-workflow.yml`; move it into place with
+> `git mv docs/cloudflare-deploy-workflow.yml .github/workflows/deploy.yml`. This has to be done
+> from a session whose GitHub credentials carry the `workflow` scope, which is why it is not
+> already applied.
 
 It is served from **https://bookmarks.colenso.org**.
 
