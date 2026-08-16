@@ -9,10 +9,8 @@ const config = {
 			fallback: undefined,
 			precompress: false,
 			strict: false
-		}),
-		paths: {
-			base: process.argv.includes('dev') ? '' : '/mikepage'
-		}
+		})
+		// Served at the root of the hoxel.dev custom domain, so no base path.
 	}
 };
 
