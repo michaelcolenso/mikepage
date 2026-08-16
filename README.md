@@ -63,11 +63,19 @@ This project is an interactive 3D visualization of bookmarks using Three.js, Sve
 The site is built as a static bundle by `@sveltejs/adapter-static` and deployed to
 **Cloudflare Workers** as [static assets](https://developers.cloudflare.com/workers/static-assets/).
 
-> **Pending step:** `.github/workflows/deploy.yml` still contains the old GitHub Pages job. Its
-> replacement lives at `docs/cloudflare-deploy-workflow.yml`; move it into place with
-> `git mv docs/cloudflare-deploy-workflow.yml .github/workflows/deploy.yml`. This has to be done
-> from a session whose GitHub credentials carry the `workflow` scope, which is why it is not
-> already applied.
+> **Pending step:** the deploy workflow must run on **Node 22 or newer**. `wrangler` and its
+> `@cloudflare/kv-asset-handler` dependency both declare `"node": ">=22.0.0"`, and this repo's
+> `.npmrc` sets `engine-strict=true`, so `npm ci` fails outright on Node 20 rather than warning.
+> Change `node-version: 20` to `node-version: 22` under the *Setup Node* step in
+> `.github/workflows/deploy.yml`. The copy at `docs/cloudflare-deploy-workflow.yml` already
+> carries the fix and can simply be moved over the live file:
+>
+> ```bash
+> git mv -f docs/cloudflare-deploy-workflow.yml .github/workflows/deploy.yml
+> ```
+>
+> This has to be done from a session whose GitHub credentials carry the `workflow` scope, which
+> is why it is not already applied.
 
 It is served from **https://bookmarks.colenso.org**.
 
