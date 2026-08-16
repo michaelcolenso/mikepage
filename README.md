@@ -63,17 +63,17 @@ This project is an interactive 3D visualization of bookmarks using Three.js, Sve
 The site is built as a static bundle by `@sveltejs/adapter-static` and published to GitHub Pages
 on every push to `main` (see `.github/workflows/deploy.yml`).
 
-It is served from the custom domain **https://colenso.org**:
+It is served from the custom domain **https://bookmarks.colenso.org**:
 
-- `static/CNAME` contains `colenso.org` and is copied into `build/` at build time, which is what
-  tells GitHub Pages to serve the site on that domain.
-- Because the site lives at the root of its own domain, `svelte.config.js` sets no `paths.base`.
+- `static/CNAME` contains `bookmarks.colenso.org` and is copied into `build/` at build time, which
+  is what tells GitHub Pages to serve the site on that domain.
+- Because the site lives at the root of its own hostname, `svelte.config.js` sets no `paths.base`.
   If the site is ever moved back to a project-path URL (e.g. `user.github.io/mikepage`), restore
   `kit.paths.base` and update the Playwright test URLs accordingly.
 
-DNS for `colenso.org` must point at GitHub Pages — an `ALIAS`/`ANAME` (or apex `A`) record for the
-apex domain and a `CNAME` for `www` pointing at `<user>.github.io` — and "Enforce HTTPS" should be
-enabled in the repository's Pages settings once the certificate is issued.
+DNS for `bookmarks.colenso.org` must point at GitHub Pages — a single `CNAME` record for the
+`bookmarks` host pointing at `<user>.github.io` — and "Enforce HTTPS" should be enabled in the
+repository's Pages settings once the certificate is issued. The `colenso.org` apex is untouched.
 
 ## Customization
 
