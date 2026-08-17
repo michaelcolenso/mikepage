@@ -8,14 +8,11 @@
 	"assets": {
 		"directory": "./build"
 	},
-	// Attaching the custom domain here makes `wrangler deploy` create and maintain the
-	// bookmarks.colenso.org DNS record, since the colenso.org zone is in the same account.
-	"routes": [
-		{
-			"pattern": "bookmarks.colenso.org",
-			"custom_domain": true
-		}
-	],
+	// No `routes` here on purpose. The bookmarks.colenso.org custom domain is attached to
+	// this Worker in the Cloudflare dashboard, which keeps the deploy token account-scoped:
+	// declaring the route would make `wrangler deploy` call /zones/<id>/workers/routes, which
+	// needs Zone-level Workers Routes and DNS permissions the CI token does not carry.
+	// To move domain management back into this file, grant those zone permissions first.
 	"observability": {
 		"enabled": true
 	}
